@@ -1,0 +1,5 @@
+[app]
+db = "app.db"
+
+[oauth]
+secrets = "client_secret_xyz.apps.googleusercontent.com.json"

@@ -6,6 +6,7 @@ import argparse
 import statistics
 import sqlite3
 
+import json
 import toml
 
 import google.auth.transport.requests
@@ -21,6 +22,7 @@ oauth_scopes = [
     'https://www.googleapis.com/auth/photoslibrary.readonly',
     'https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata'
 ]
+
 
 def validate_cfg(cfg):
     assert isinstance(cfg, dict)
@@ -42,16 +44,17 @@ def validate_cfg(cfg):
 
     if 'user' in cfg:
         assert isinstance(cfg['user'], dict)
-        
+
         assert 'refresh_token' in cfg['user']
         assert isinstance(cfg['user']['refresh_token'], str)
+
 
 def auth(cfg, scopes):
     secrets = os.path.join('cfg', cfg['oauth']['secrets'])
 
     flow = InstalledAppFlow.from_client_secrets_file(secrets,
-                scopes=scopes,
-                redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+                                                     scopes=scopes,
+                                                     redirect_uri='urn:ietf:wg:oauth:2.0:oob')
 
     if 'user' in cfg:
         client_cfg = flow.client_config
@@ -60,10 +63,10 @@ def auth(cfg, scopes):
         refresh_req = google.auth.transport.requests.Request()
 
         fresh = google.oauth2.credentials.Credentials(None,
-                    refresh_token=refresh_token, 
-                    token_uri=client_cfg['token_uri'], 
-                    client_id=client_cfg['client_id'], 
-                    client_secret=client_cfg['client_secret'])
+                                                      refresh_token=refresh_token,
+                                                      token_uri=client_cfg['token_uri'],
+                                                      client_id=client_cfg['client_id'],
+                                                      client_secret=client_cfg['client_secret'])
         fresh.refresh(refresh_req)
 
         if fresh.valid:
@@ -72,9 +75,10 @@ def auth(cfg, scopes):
         print('refresh token expired. ', end='')
 
     credentials = flow.run_console(
-                    authorization_prompt_message='please login:\n\n\t{url}\n',
-                    authorization_code_message='auth code: ')
+        authorization_prompt_message='please login:\n\n\t{url}\n',
+        authorization_code_message='auth code: ')
     return credentials
+
 
 class Builder:
     def __init__(self, base, ver):
@@ -84,16 +88,18 @@ class Builder:
     def build(self, path):
         return 'https://{}/{}{}'.format(self.__base, self.__ver, path)
 
+
 class MediaItem:
-    def __init__(self, _id, desc, baseurl, mime, filename, meta=None):
+    def __init__(self, _id, desc, baseurl, productUrl, mime, filename, meta=None):
         self.id = _id
         self.description = desc
         self.baseUrl = baseurl
+        self.productUrl = productUrl
         self.filename = filename
         self.mimeType = mime
 
         if meta is not None:
-            self.meta = meta
+            self.meta = '{}'
 
     @classmethod
     def from_dict(cls, js):
@@ -104,31 +110,41 @@ class MediaItem:
             desc = js['description']
 
         base = js['baseUrl']
+        product = js['productUrl']
         mime = js['mimeType']
         filename = js['filename']
+        if 'mediaMetadata' in js:
+            meta = json.dumps(js['mediaMetadata'])
+        else:
+            meta = None
 
-        return MediaItem(_id, desc, base, mime, filename, js)
+        print(js)
+
+        return MediaItem(_id, desc, base, product, mime, filename, js)
+
 
 def init_library(credentials, conn):
     c = conn.cursor()
 
     cmd_init_table = '''
     CREATE TABLE IF NOT EXISTS mediaitems(
-        id text PRIMARY KEY,
-        baseUrl text,
-        mimeType text,
-        filename text
+        id TEXT PRIMARY KEY,
+        baseUrl TEXT,
+        productUrl TEXT,
+        mimeType TEXT,
+        mediaMetadata TEXT,
+        filename TEXT
     );'''
 
     c.execute(cmd_init_table)
     conn.commit()
 
     cmd_select_rec = '''
-    SELECT * from mediaitems where id = :id;
+    SELECT * FROM mediaitems WHERE id = :id;
     '''
 
     cmd_insert_rec = '''
-    INSERT OR REPLACE INTO mediaitems VALUES(:id, :baseUrl, :mimeType, :filename);
+    INSERT OR REPLACE INTO mediaitems VALUES(:id, :baseUrl, :productUrl, :mimeType, :mediaMetadata, :filename);
     '''
 
     a_session = AuthorizedSession(credentials)
@@ -167,9 +183,13 @@ def init_library(credentials, conn):
             else:
                 ids.append(item.id)
 
+            print(item)
+            sys.exit(1)
+
             c.execute(cmd_insert_rec, {
                 'id': item.id,
                 'baseUrl': item.baseUrl,
+                'productUrl': item.productUrl,
                 'mimeType': item.mimeType,
                 'filename': item.filename,
             })
@@ -177,29 +197,34 @@ def init_library(credentials, conn):
         print('{} {}'.format(len(res['mediaItems']), req.elapsed.total_seconds()))
         latency.append(req.elapsed.total_seconds())
         ctr += len(res['mediaItems'])
+        if 'nextPageToken' not in res:
+            break
         data['pageToken'] = res['nextPageToken']
 
     conn.commit()
     conn.close()
 
-    print('\n\ntotal:{}, dup:{} ({}), latency (avg): {}, (med): {}'.format(ctr, dup, (ctr - dup), statistics.mean(latency), statistics.median(latency)))
+    print('\n\ntotal:{}, dup:{} ({}), latency (avg): {}, (med): {}'.format(ctr, dup, (ctr - dup),
+                                                                           statistics.mean(latency),
+                                                                           statistics.median(latency)))
 
     return 0
+
 
 def init_albums(credentials, conn):
     c = conn.cursor()
 
     cmd_init_table = '''
     CREATE TABLE IF NOT EXISTS albums(
-        id text PRIMARY KEY,
-        title text,
-        mediaItemsCount text
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        mediaItemsCount TEXT
     );
     '''
 
     c.execute(cmd_init_table)
     conn.commit()
-    
+
     cmd_insert_rec = '''
     INSERT OR REPLACE INTO albums VALUES(:id, :title, :mediaItemsCount);
     '''
@@ -223,7 +248,7 @@ def init_albums(credentials, conn):
             _id = it['id']
             title = it['title']
             mediaItemsCount = it['mediaItemsCount']
-            
+
             c.execute(cmd_insert_rec, {
                 'id': _id,
                 'title': title,
@@ -245,17 +270,19 @@ def init_albums(credentials, conn):
     conn.commit()
     conn.close()
 
-    print('\n\ntotal:{}, latency (avg): {}, (med): {}'.format(ctr, statistics.mean(latency), statistics.median(latency)))
+    print(
+        '\n\ntotal:{}, latency (avg): {}, (med): {}'.format(ctr, statistics.mean(latency), statistics.median(latency)))
 
     return 0
+
 
 def albums_meta(credentials, conn):
     c = conn.cursor()
 
     cmd_init_table = '''
     CREATE TABLE IF NOT EXISTS albums_meta(
-        id text,
-        album_id text
+        id TEXT,
+        album_id TEXT
     );
     '''
 
@@ -263,15 +290,15 @@ def albums_meta(credentials, conn):
     conn.commit()
 
     cmd_get_albums = '''
-    select * from albums;
+    SELECT * FROM albums;
     '''
 
     cmd_get_meta_id_album = '''
-    select * from albums_meta where id = :id and album_id = :album_id;
+    SELECT * FROM albums_meta WHERE id = :id AND album_id = :album_id;
     '''
 
     cmd_insert_meta_id_album = '''
-    insert into albums_meta values(:id, :aid);
+    INSERT INTO albums_meta VALUES(:id, :aid);
     '''
 
     a_session = AuthorizedSession(credentials)
@@ -306,7 +333,6 @@ def albums_meta(credentials, conn):
             if 'mediaItems' not in res:
                 break
 
-
             for item in res['mediaItems']:
                 c.execute(cmd_get_meta_id_album, {
                     'id': item['id'],
@@ -334,11 +360,13 @@ def albums_meta(credentials, conn):
             data['pageToken'] = res['nextPageToken']
 
         conn.commit()
-        print('\n\n{} :: total:{}, latency (avg): {}, (med): {}'.format(album[1], ctr, statistics.mean(latency), statistics.median(latency)))
+        print('\n\n{} :: total:{}, latency (avg): {}, (med): {}'.format(album[1], ctr, statistics.mean(latency),
+                                                                        statistics.median(latency)))
 
     conn.close()
 
     return 0
+
 
 def mediaitems_get(credentials, conn, _id):
     a_session = AuthorizedSession(credentials)
@@ -358,18 +386,21 @@ def mediaitems_get(credentials, conn, _id):
     conn.close()
     return 0
 
+
 cmd_valid = ['init_library', 'init_albums', 'albums_meta']
 cmd_startswith = ['get']
-def check_cmd(cmd):
 
+
+def check_cmd(cmd):
     if cmd in cmd_valid:
         return (cmd, None)
 
     for s in cmd_startswith:
         if cmd.startswith('{}:'.format(s)):
-            return (cmd, cmd[len(s)+1:])
+            return (cmd, cmd[len(s) + 1:])
 
     return (None, None)
+
 
 def main():
     pwd = os.getcwd()
@@ -414,6 +445,7 @@ def main():
         return mediaitems_get(credentials, conn, arg)
 
     return 0
+
 
 if __name__ == '__main__':
     sys.exit(main())

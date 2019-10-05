@@ -2,3 +2,5 @@ app.cfg
 client_secret_*.json
 **/__pycache__/
 app.db
+venv
+.idea/

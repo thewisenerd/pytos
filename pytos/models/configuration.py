@@ -19,6 +19,9 @@ class Configuration:
         assert 'secrets' in cfg['oauth']
         assert isinstance(cfg['oauth']['secrets'], str)
 
+        if 'refresh_token' in cfg:
+            assert isinstance(cfg['user']['refresh_token'], str)
+
         p1 = cfg['oauth']['secrets']
         p2 = os.path.join('cfg', cfg['oauth']['secrets'])
         assert (os.path.isfile(p1) or os.path.isfile(p2))
@@ -28,12 +31,6 @@ class Configuration:
 
         assert 'db' in cfg['app']
         assert isinstance(cfg['app']['db'], str)
-
-        if 'user' in cfg:
-            assert isinstance(cfg['user'], dict)
-
-            assert 'refresh_token' in cfg['user']
-            assert isinstance(cfg['user']['refresh_token'], str)
 
         return 0
 
@@ -57,15 +54,13 @@ class Configuration:
 
     def get_refresh_token(self) -> str:
         cfg = self.buf
-        return cfg['user']['refresh_token'] if 'user' in cfg else None
+        return cfg['oauth']['refresh_token'] if 'refresh_token' in cfg['oauth'] else None
 
     def set_refresh_token(self, token):
         cfg = self.buf
-        user = cfg['user']
-        if user is None:
-            user = {}
-        user['refresh_token'] = token
-        cfg['user'] = user
+        oauth = cfg['oauth']
+        oauth['refresh_token'] = token
+        cfg['oauth'] = oauth
         self.buf = cfg
 
     refresh_token = property(get_refresh_token, set_refresh_token)

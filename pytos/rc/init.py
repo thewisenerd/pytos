@@ -26,6 +26,8 @@ class InitializeLibrary(RunCommand):
     def run(self, context: Context):
         authorizer = Authorizer(context.cfg)
         credentials = authorizer.auth()
+        context.cfg.refresh_token = credentials.refresh_token
+        context.cfg.dump()
 
         media_items = get_all_media_items(credentials)
         albums = get_all_albums(credentials)

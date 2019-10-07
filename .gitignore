@@ -1,6 +1,9 @@
-app.cfg
-client_secret_*.json
+# project files
 **/__pycache__/
-app.db
 venv
 .idea/
+
+# application files
+config.toml
+client_secret_*.json
+app.db
